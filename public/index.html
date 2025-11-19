@@ -17,10 +17,11 @@
             color: #fff;
             min-height: 100vh;
             padding: 20px;
+            overflow-x: hidden;
         }
         
         .container {
-            max-width: 1400px;
+            max-width: 1600px;
             margin: 0 auto;
         }
         
@@ -33,7 +34,7 @@
         
         .subtitle {
             text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
             color: #aaa;
             font-size: 1.1em;
         }
@@ -51,6 +52,7 @@
             border-radius: 15px;
             padding: 20px;
             border: 1px solid rgba(255, 255, 255, 0.1);
+            height: fit-content;
         }
         
         .canvas-container {
@@ -67,6 +69,8 @@
             border: 2px solid rgba(255, 255, 255, 0.2);
             border-radius: 10px;
             background: #000;
+            max-width: 100%;
+            height: auto;
         }
         
         .control-group {
@@ -99,6 +103,64 @@
             margin-left: 10px;
             color: #90caf9;
             font-weight: bold;
+        }
+        
+        /* Toggle switch */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+        
+        .toggle-label {
+            font-weight: bold;
+            color: #64b5f6;
+            font-size: 0.95em;
+        }
+        
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 26px;
+        }
+        
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(255, 255, 255, 0.2);
+            transition: 0.3s;
+            border-radius: 26px;
+        }
+        
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+        
+        input:checked + .toggle-slider {
+            background-color: #667eea;
+        }
+        
+        input:checked + .toggle-slider:before {
+            transform: translateX(24px);
         }
         
         button {
@@ -143,31 +205,63 @@
         
         .info-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 15px;
         }
         
         .info-item {
             background: rgba(0, 0, 0, 0.3);
-            padding: 15px;
+            padding: 12px;
             border-radius: 10px;
             border-left: 3px solid #64b5f6;
         }
         
         .info-label {
             color: #90caf9;
-            font-size: 0.9em;
+            font-size: 0.85em;
             margin-bottom: 5px;
         }
         
         .info-value {
-            font-size: 1.3em;
+            font-size: 1.1em;
             font-weight: bold;
+            word-break: break-all;
         }
         
-        @media (max-width: 1024px) {
+        @media (max-width: 1200px) {
             .main-content {
                 grid-template-columns: 1fr;
+            }
+            
+            .control-panel {
+                max-width: 600px;
+                margin: 0 auto;
+            }
+            
+            h1 {
+                font-size: 2em;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            
+            h1 {
+                font-size: 1.5em;
+            }
+            
+            .subtitle {
+                font-size: 0.9em;
+            }
+            
+            .info-grid {
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            }
+            
+            .info-value {
+                font-size: 0.95em;
             }
         }
     </style>
@@ -213,6 +307,16 @@
                     <input type="range" id="speed" min="1" max="50" value="10">
                 </div>
                 
+                <h3 style="margin: 20px 0 15px 0; color: #64b5f6; font-size: 1.1em;">表示設定</h3>
+                
+                <div class="toggle-container">
+                    <span class="toggle-label">速度ベクトル表示</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="showVelocity" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                
                 <button class="btn-primary" onclick="startSimulation()">▶ シミュレーション開始</button>
                 <button class="btn-secondary" onclick="pauseSimulation()">⏸ 一時停止</button>
                 <button class="btn-secondary" onclick="resetSimulation()">🔄 リセット</button>
@@ -250,6 +354,10 @@
                 <div class="info-item">
                     <div class="info-label">距離</div>
                     <div class="info-value" id="rValue">0.0 m</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">軌跡ポイント数</div>
+                    <div class="info-value" id="trailCount">0</div>
                 </div>
             </div>
         </div>

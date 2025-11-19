@@ -4,12 +4,17 @@ const M = 5.972e24;     // kg (Earth mass)
 const GM = G * M;
 const EARTH_RADIUS = 6.371e6; // m
 
-// Simulation state - memory efficient (no pre-calculation)
-let trailPoints = []; // Only store recent trail points
-const MAX_TRAIL_POINTS = 2000; // Limit trail length to save memory
+// Adaptive trail storage - keeps recent points dense, old points sparse
+let trailPoints = []; // Recent points (high resolution)
+let sparseTrail = []; // Older points (downsampled)
+const MAX_RECENT_POINTS = 2000; // Recent high-res points
+const MAX_SPARSE_POINTS = 5000; // Older sparse points
+const DOWNSAMPLE_RATIO = 10; // Keep every Nth point when downsampling
+
 let currentState = { t: 0, x: 0, y: 0, vx: 0, vy: 0, r: 0 };
 let isRunning = false;
 let animationId = null;
+let showVelocityVector = true;
 
 // Initial conditions
 let x0, y0, vx0, vy0, dt;
@@ -30,6 +35,11 @@ const ctx = canvas.getContext('2d');
 // Initialize speed slider
 document.getElementById('speed').addEventListener('input', function() {
     document.getElementById('speedValue').textContent = this.value + 'x';
+});
+
+// Velocity vector toggle
+document.getElementById('showVelocity').addEventListener('change', function() {
+    showVelocityVector = this.checked;
 });
 
 // Fourth-order Runge-Kutta method
@@ -104,7 +114,28 @@ function initializeSimulation() {
         r: Math.sqrt(x0 * x0 + y0 * y0)
     };
     
-    trailPoints = [{ x: x0, y: y0 }];
+    trailPoints = [{ x: x0, y: y0, t: 0 }];
+    sparseTrail = [];
+}
+
+// Adaptive trail management - downsample old points
+function manageTrailPoints() {
+    if (trailPoints.length > MAX_RECENT_POINTS) {
+        // Move oldest points to sparse trail (downsampled)
+        const pointsToMove = trailPoints.length - MAX_RECENT_POINTS;
+        const oldPoints = trailPoints.splice(0, pointsToMove);
+        
+        // Downsample: keep every Nth point
+        for (let i = 0; i < oldPoints.length; i += DOWNSAMPLE_RATIO) {
+            sparseTrail.push(oldPoints[i]);
+        }
+        
+        // Limit sparse trail size
+        if (sparseTrail.length > MAX_SPARSE_POINTS) {
+            const excess = sparseTrail.length - MAX_SPARSE_POINTS;
+            sparseTrail.splice(0, excess);
+        }
+    }
 }
 
 // Update camera to keep both Earth and spacecraft in view
@@ -147,6 +178,23 @@ function worldToScreen(worldX, worldY) {
     return { x: screenX, y: screenY };
 }
 
+// Draw trajectory trail
+function drawTrail(points, baseAlpha) {
+    if (points.length < 2) return;
+    
+    ctx.lineWidth = 2;
+    for (let i = 1; i < points.length; i++) {
+        const alpha = (i / points.length) * baseAlpha;
+        ctx.strokeStyle = `rgba(100, 200, 255, ${alpha})`;
+        ctx.beginPath();
+        const p1 = worldToScreen(points[i - 1].x, points[i - 1].y);
+        const p2 = worldToScreen(points[i].x, points[i].y);
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+    }
+}
+
 // Draw scene
 function draw() {
     ctx.fillStyle = '#000';
@@ -164,18 +212,32 @@ function draw() {
         // Vertical lines
         const start1 = worldToScreen(i, -gridRange);
         const end1 = worldToScreen(i, gridRange);
-        ctx.beginPath();
-        ctx.moveTo(start1.x, start1.y);
-        ctx.lineTo(end1.x, end1.y);
-        ctx.stroke();
+        if (start1.x >= 0 && start1.x <= canvas.width) {
+            ctx.beginPath();
+            ctx.moveTo(start1.x, start1.y);
+            ctx.lineTo(end1.x, end1.y);
+            ctx.stroke();
+        }
         
         // Horizontal lines
         const start2 = worldToScreen(-gridRange, i);
         const end2 = worldToScreen(gridRange, i);
-        ctx.beginPath();
-        ctx.moveTo(start2.x, start2.y);
-        ctx.lineTo(end2.x, end2.y);
-        ctx.stroke();
+        if (start2.y >= 0 && start2.y <= canvas.height) {
+            ctx.beginPath();
+            ctx.moveTo(start2.x, start2.y);
+            ctx.lineTo(end2.x, end2.y);
+            ctx.stroke();
+        }
+    }
+    
+    // Draw sparse trail (old data)
+    if (sparseTrail.length > 0) {
+        drawTrail(sparseTrail, 0.3);
+    }
+    
+    // Draw recent trail (high resolution)
+    if (trailPoints.length > 0) {
+        drawTrail(trailPoints, 0.6);
     }
     
     // Draw Earth
@@ -198,21 +260,6 @@ function draw() {
     ctx.beginPath();
     ctx.arc(centerScreen.x, centerScreen.y, earthScreenRadius, 0, 2 * Math.PI);
     ctx.stroke();
-    
-    // Draw trajectory trail with gradient
-    if (trailPoints.length > 1) {
-        ctx.lineWidth = 2;
-        for (let i = 1; i < trailPoints.length; i++) {
-            const alpha = i / trailPoints.length; // Fade older points
-            ctx.strokeStyle = `rgba(100, 200, 255, ${alpha * 0.6})`;
-            ctx.beginPath();
-            const p1 = worldToScreen(trailPoints[i - 1].x, trailPoints[i - 1].y);
-            const p2 = worldToScreen(trailPoints[i].x, trailPoints[i].y);
-            ctx.moveTo(p1.x, p1.y);
-            ctx.lineTo(p2.x, p2.y);
-            ctx.stroke();
-        }
-    }
     
     // Draw spacecraft
     const spacecraftPos = worldToScreen(currentState.x, currentState.y);
@@ -241,41 +288,45 @@ function draw() {
     ctx.arc(spacecraftPos.x, spacecraftPos.y, 5, 0, 2 * Math.PI);
     ctx.stroke();
     
-    // Draw velocity vector
-    const velocityScale = 5000;
-    const velEnd = worldToScreen(
-        currentState.x + currentState.vx * velocityScale,
-        currentState.y + currentState.vy * velocityScale
-    );
-    ctx.strokeStyle = 'rgba(255, 100, 100, 0.8)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(spacecraftPos.x, spacecraftPos.y);
-    ctx.lineTo(velEnd.x, velEnd.y);
-    ctx.stroke();
-    
-    // Draw arrowhead
-    const angle = Math.atan2(velEnd.y - spacecraftPos.y, velEnd.x - spacecraftPos.x);
-    const arrowSize = 8;
-    ctx.fillStyle = 'rgba(255, 100, 100, 0.8)';
-    ctx.beginPath();
-    ctx.moveTo(velEnd.x, velEnd.y);
-    ctx.lineTo(
-        velEnd.x - arrowSize * Math.cos(angle - Math.PI / 6),
-        velEnd.y - arrowSize * Math.sin(angle - Math.PI / 6)
-    );
-    ctx.lineTo(
-        velEnd.x - arrowSize * Math.cos(angle + Math.PI / 6),
-        velEnd.y - arrowSize * Math.sin(angle + Math.PI / 6)
-    );
-    ctx.closePath();
-    ctx.fill();
+    // Draw velocity vector (if enabled)
+    if (showVelocityVector) {
+        const velocityScale = 5000;
+        const velEnd = worldToScreen(
+            currentState.x + currentState.vx * velocityScale,
+            currentState.y + currentState.vy * velocityScale
+        );
+        ctx.strokeStyle = 'rgba(255, 100, 100, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(spacecraftPos.x, spacecraftPos.y);
+        ctx.lineTo(velEnd.x, velEnd.y);
+        ctx.stroke();
+        
+        // Draw arrowhead
+        const angle = Math.atan2(velEnd.y - spacecraftPos.y, velEnd.x - spacecraftPos.x);
+        const arrowSize = 8;
+        ctx.fillStyle = 'rgba(255, 100, 100, 0.8)';
+        ctx.beginPath();
+        ctx.moveTo(velEnd.x, velEnd.y);
+        ctx.lineTo(
+            velEnd.x - arrowSize * Math.cos(angle - Math.PI / 6),
+            velEnd.y - arrowSize * Math.sin(angle - Math.PI / 6)
+        );
+        ctx.lineTo(
+            velEnd.x - arrowSize * Math.cos(angle + Math.PI / 6),
+            velEnd.y - arrowSize * Math.sin(angle + Math.PI / 6)
+        );
+        ctx.closePath();
+        ctx.fill();
+    }
     
     // Draw labels
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 16px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('Earth', centerScreen.x, centerScreen.y + earthScreenRadius + 20);
+    if (centerScreen.y < canvas.height - 30) {
+        ctx.fillText('Earth', centerScreen.x, centerScreen.y + earthScreenRadius + 20);
+    }
     
     // Draw scale indicator
     ctx.textAlign = 'left';
@@ -293,6 +344,7 @@ function updateInfo() {
     document.getElementById('vxValue').textContent = currentState.vx.toFixed(1) + ' m/s';
     document.getElementById('vyValue').textContent = currentState.vy.toFixed(1) + ' m/s';
     document.getElementById('rValue').textContent = (currentState.r / 1e6).toFixed(3) + ' ×10⁶ m';
+    document.getElementById('trailCount').textContent = (sparseTrail.length + trailPoints.length).toLocaleString();
 }
 
 // Step simulation forward
@@ -306,11 +358,11 @@ function stepSimulation() {
     currentState.r = Math.sqrt(result.x * result.x + result.y * result.y);
     currentState.t += dt;
     
-    // Add to trail (with memory limit)
-    trailPoints.push({ x: currentState.x, y: currentState.y });
-    if (trailPoints.length > MAX_TRAIL_POINTS) {
-        trailPoints.shift(); // Remove oldest point
-    }
+    // Add to trail
+    trailPoints.push({ x: currentState.x, y: currentState.y, t: currentState.t });
+    
+    // Manage trail points (adaptive downsampling)
+    manageTrailPoints();
 }
 
 // Animation loop - continuous simulation
@@ -359,24 +411,27 @@ function resetSimulation() {
 }
 
 function downloadCSV() {
-    // Generate CSV from trail points
-    let csv = 'i,t,x,y,vx,vy\n';
+    // Generate CSV from all trail points
+    let csv = 'i,t,x,y\n';
     
-    // For download, we need to recalculate or use stored trail
-    // For now, we'll use the current trail points
-    alert('CSV download will contain the visible trail points. For full simulation data, let it run longer!');
+    let index = 0;
+    // Add sparse trail
+    sparseTrail.forEach((point) => {
+        csv += `${index},${point.t || 0},${point.x},${point.y}\n`;
+        index++;
+    });
     
-    trailPoints.forEach((point, i) => {
-        // Approximate time based on trail index
-        const t = i * dt * parseInt(document.getElementById('speed').value);
-        csv += `${i},${t.toFixed(2)},${point.x},${point.y},0,0\n`;
+    // Add recent trail
+    trailPoints.forEach((point) => {
+        csv += `${index},${point.t || 0},${point.x},${point.y}\n`;
+        index++;
     });
     
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'swingby_trail.csv';
+    a.download = `swingby_trail_${Date.now()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
 }
