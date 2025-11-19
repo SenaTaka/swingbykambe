@@ -4,17 +4,19 @@ const M = 5.972e24;     // kg (Earth mass)
 const GM = G * M;
 const EARTH_RADIUS = 6.371e6; // m
 
-// Adaptive trail storage - keeps recent points dense, old points sparse
-let trailPoints = []; // Recent points (high resolution)
-let sparseTrail = []; // Older points (downsampled)
-const MAX_RECENT_POINTS = 2000; // Recent high-res points
-const MAX_SPARSE_POINTS = 5000; // Older sparse points
-const DOWNSAMPLE_RATIO = 10; // Keep every Nth point when downsampling
+// Multi-level trail storage for very long simulations
+let trailLevels = [
+    { points: [], maxPoints: 1000, interval: 1 },    // Level 0: Every point (most recent)
+    { points: [], maxPoints: 2000, interval: 5 },    // Level 1: Every 5th point
+    { points: [], maxPoints: 3000, interval: 25 },   // Level 2: Every 25th point
+    { points: [], maxPoints: 5000, interval: 125 }   // Level 3: Every 125th point (oldest)
+];
 
 let currentState = { t: 0, x: 0, y: 0, vx: 0, vy: 0, r: 0 };
 let isRunning = false;
 let animationId = null;
 let showVelocityVector = true;
+let stepCounter = 0; // Global step counter for interval tracking
 
 // Initial conditions
 let x0, y0, vx0, vy0, dt;
@@ -114,28 +116,49 @@ function initializeSimulation() {
         r: Math.sqrt(x0 * x0 + y0 * y0)
     };
     
-    trailPoints = [{ x: x0, y: y0, t: 0 }];
-    sparseTrail = [];
+    // Reset all trail levels
+    trailLevels.forEach(level => {
+        level.points = [{ x: x0, y: y0, t: 0 }];
+    });
+    stepCounter = 0;
 }
 
-// Adaptive trail management - downsample old points
-function manageTrailPoints() {
-    if (trailPoints.length > MAX_RECENT_POINTS) {
-        // Move oldest points to sparse trail (downsampled)
-        const pointsToMove = trailPoints.length - MAX_RECENT_POINTS;
-        const oldPoints = trailPoints.splice(0, pointsToMove);
+// Multi-level trail management - cascading downsampling
+function manageTrailPoints(newPoint) {
+    // Add to appropriate levels based on step counter
+    for (let i = 0; i < trailLevels.length; i++) {
+        const level = trailLevels[i];
         
-        // Downsample: keep every Nth point
-        for (let i = 0; i < oldPoints.length; i += DOWNSAMPLE_RATIO) {
-            sparseTrail.push(oldPoints[i]);
-        }
-        
-        // Limit sparse trail size
-        if (sparseTrail.length > MAX_SPARSE_POINTS) {
-            const excess = sparseTrail.length - MAX_SPARSE_POINTS;
-            sparseTrail.splice(0, excess);
+        // Check if this point should be added to this level
+        if (stepCounter % level.interval === 0) {
+            level.points.push({ ...newPoint });
+            
+            // When level is full, cascade to next level
+            if (level.points.length > level.maxPoints && i < trailLevels.length - 1) {
+                const nextLevel = trailLevels[i + 1];
+                const pointsToMove = Math.floor(level.points.length / 2);
+                
+                // Move every Nth point to next level
+                const ratio = Math.floor(nextLevel.interval / level.interval);
+                for (let j = 0; j < pointsToMove; j += ratio) {
+                    if (level.points[j]) {
+                        nextLevel.points.push(level.points[j]);
+                    }
+                }
+                
+                // Remove moved points from current level
+                level.points.splice(0, pointsToMove);
+            }
+            
+            // Limit last level size
+            if (i === trailLevels.length - 1 && level.points.length > level.maxPoints) {
+                const excess = level.points.length - level.maxPoints;
+                level.points.splice(0, excess);
+            }
         }
     }
+    
+    stepCounter++;
 }
 
 // Update camera to keep both Earth and spacecraft in view
@@ -178,21 +201,25 @@ function worldToScreen(worldX, worldY) {
     return { x: screenX, y: screenY };
 }
 
-// Draw trajectory trail
-function drawTrail(points, baseAlpha) {
+// Draw continuous trajectory trail
+function drawTrail(points, alpha, lineWidth = 2) {
     if (points.length < 2) return;
     
-    ctx.lineWidth = 2;
-    for (let i = 1; i < points.length; i++) {
-        const alpha = (i / points.length) * baseAlpha;
-        ctx.strokeStyle = `rgba(100, 200, 255, ${alpha})`;
-        ctx.beginPath();
-        const p1 = worldToScreen(points[i - 1].x, points[i - 1].y);
-        const p2 = worldToScreen(points[i].x, points[i].y);
-        ctx.moveTo(p1.x, p1.y);
-        ctx.lineTo(p2.x, p2.y);
-        ctx.stroke();
+    ctx.strokeStyle = `rgba(100, 200, 255, ${alpha})`;
+    ctx.lineWidth = lineWidth;
+    ctx.beginPath();
+    
+    let first = true;
+    for (let i = 0; i < points.length; i++) {
+        const p = worldToScreen(points[i].x, points[i].y);
+        if (first) {
+            ctx.moveTo(p.x, p.y);
+            first = false;
+        } else {
+            ctx.lineTo(p.x, p.y);
+        }
     }
+    ctx.stroke();
 }
 
 // Draw scene
@@ -230,14 +257,14 @@ function draw() {
         }
     }
     
-    // Draw sparse trail (old data)
-    if (sparseTrail.length > 0) {
-        drawTrail(sparseTrail, 0.3);
-    }
-    
-    // Draw recent trail (high resolution)
-    if (trailPoints.length > 0) {
-        drawTrail(trailPoints, 0.6);
+    // Draw trails from oldest to newest (bottom to top layers)
+    for (let i = trailLevels.length - 1; i >= 0; i--) {
+        const level = trailLevels[i];
+        if (level.points.length > 1) {
+            const alpha = 0.2 + (i / trailLevels.length) * 0.4; // Older = fainter
+            const lineWidth = 1.5 + (i / trailLevels.length) * 1; // Newer = thicker
+            drawTrail(level.points, alpha, lineWidth);
+        }
     }
     
     // Draw Earth
@@ -344,7 +371,10 @@ function updateInfo() {
     document.getElementById('vxValue').textContent = currentState.vx.toFixed(1) + ' m/s';
     document.getElementById('vyValue').textContent = currentState.vy.toFixed(1) + ' m/s';
     document.getElementById('rValue').textContent = (currentState.r / 1e6).toFixed(3) + ' ×10⁶ m';
-    document.getElementById('trailCount').textContent = (sparseTrail.length + trailPoints.length).toLocaleString();
+    
+    let totalPoints = 0;
+    trailLevels.forEach(level => totalPoints += level.points.length);
+    document.getElementById('trailCount').textContent = totalPoints.toLocaleString();
 }
 
 // Step simulation forward
@@ -358,11 +388,8 @@ function stepSimulation() {
     currentState.r = Math.sqrt(result.x * result.x + result.y * result.y);
     currentState.t += dt;
     
-    // Add to trail
-    trailPoints.push({ x: currentState.x, y: currentState.y, t: currentState.t });
-    
-    // Manage trail points (adaptive downsampling)
-    manageTrailPoints();
+    // Add to multi-level trail system
+    manageTrailPoints({ x: currentState.x, y: currentState.y, t: currentState.t });
 }
 
 // Animation loop - continuous simulation
@@ -411,21 +438,18 @@ function resetSimulation() {
 }
 
 function downloadCSV() {
-    // Generate CSV from all trail points
-    let csv = 'i,t,x,y\n';
+    // Generate CSV from all trail points (all levels)
+    let csv = 'i,t,x,y,level\n';
     
     let index = 0;
-    // Add sparse trail
-    sparseTrail.forEach((point) => {
-        csv += `${index},${point.t || 0},${point.x},${point.y}\n`;
-        index++;
-    });
-    
-    // Add recent trail
-    trailPoints.forEach((point) => {
-        csv += `${index},${point.t || 0},${point.x},${point.y}\n`;
-        index++;
-    });
+    // Add all levels
+    for (let levelIdx = trailLevels.length - 1; levelIdx >= 0; levelIdx--) {
+        const level = trailLevels[levelIdx];
+        level.points.forEach((point) => {
+            csv += `${index},${point.t || 0},${point.x},${point.y},${levelIdx}\n`;
+            index++;
+        });
+    }
     
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
