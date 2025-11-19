@@ -1,0 +1,12 @@
+{
+  "name": "swingby-simulator",
+  "version": "1.0.0",
+  "description": "Gravity assist (swingby) simulator using Runge-Kutta method",
+  "scripts": {
+    "dev": "npx serve public",
+    "build": "echo 'No build needed for static site'"
+  },
+  "keywords": ["swingby", "gravity-assist", "physics", "simulation"],
+  "author": "",
+  "license": "MIT"
+}
