@@ -91,7 +91,7 @@ function initializeSimulation() {
     let t = 0;
     
     // Calculate trajectory
-    const maxSteps = 4e9;
+    const maxSteps = 4e6;
     for (let i = 0; i < maxSteps; i++) {
         const r = Math.sqrt(x * x + y * y);
         simulationData.push({ t, x, y, vx, vy, r });
